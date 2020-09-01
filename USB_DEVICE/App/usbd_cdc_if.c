@@ -23,7 +23,8 @@
 #include "usbd_cdc_if.h"
 
 /* USER CODE BEGIN INCLUDE */
-
+#include <stdbool.h>
+#include "main.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -290,6 +291,16 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
+  static bool push = false;
+
+  if (!push)
+  {
+    if (*Len == 1 && Buf[0] == 0xa0)
+    {
+        pwrkey_push();
+    }
+  }
+
   HAL_UART_Transmit_DMA(&UartHandle, Buf, *Len);
   return (USBD_OK);
   /* USER CODE END 6 */

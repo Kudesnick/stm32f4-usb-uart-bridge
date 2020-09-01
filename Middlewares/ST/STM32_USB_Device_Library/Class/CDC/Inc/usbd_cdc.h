@@ -90,7 +90,7 @@ extern "C" {
 /**
   * @}
   */
-typedef struct
+typedef struct __attribute__((packed))
 {
   uint32_t bitrate;
   uint8_t  format;

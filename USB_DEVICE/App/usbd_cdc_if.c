@@ -63,6 +63,7 @@
   */
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
+#define USARTx USART3
 /* USER CODE END PRIVATE_DEFINES */
 
 /**
@@ -95,6 +96,25 @@ uint8_t UserRxBufferFS[APP_RX_DATA_SIZE];
 uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
+
+UART_HandleTypeDef UartHandle =
+{
+  .Instance        = USARTx,
+  .Init.BaudRate   = 115200,
+  .Init.WordLength = UART_WORDLENGTH_8B,
+  .Init.StopBits   = UART_STOPBITS_1,
+  .Init.Parity     = UART_PARITY_NONE,
+  .Init.HwFlowCtl  = UART_HWCONTROL_NONE,
+  .Init.Mode       = UART_MODE_TX_RX,
+};
+
+USBD_CDC_LineCodingTypeDef LineCoding =
+  {
+    115200, /* baud rate*/
+    0x00,   /* stop bits-1*/
+    0x00,   /* parity - none*/
+    0x08    /* nb. of bits 8*/
+  };
 
 /* USER CODE END PRIVATE_VARIABLES */
 
@@ -130,6 +150,8 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *pbuf, uint32_t *Len, uint8_t epnum);
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
 
+static void ComPort_Config(void);
+
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
 /**
@@ -156,6 +178,8 @@ static int8_t CDC_Init_FS(void)
   /* Set Application Buffers */
   USBD_CDC_SetTxBuffer(&hUsbDeviceFS, UserTxBufferFS, 0);
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
+
+  ComPort_Config();
   return (USBD_OK);
   /* USER CODE END 3 */
 }
@@ -221,10 +245,14 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
   /* 6      | bDataBits  |   1   | Number Data bits (5, 6, 7, 8 or 16).          */
   /*******************************************************************************/
     case CDC_SET_LINE_CODING:
+      LineCoding = *(USBD_CDC_LineCodingTypeDef *)pbuf;
 
+      /* Set the new configuration */
+      ComPort_Config();
     break;
 
     case CDC_GET_LINE_CODING:
+      *(USBD_CDC_LineCodingTypeDef *)pbuf = LineCoding;
 
     break;
 
@@ -262,8 +290,7 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+  HAL_UART_Transmit_DMA(&UartHandle, Buf, *Len);
   return (USBD_OK);
   /* USER CODE END 6 */
 }
@@ -312,11 +339,124 @@ static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
   UNUSED(Buf);
   UNUSED(Len);
   UNUSED(epnum);
+
+  HAL_UART_Receive_DMA(&UartHandle, UserTxBufferFS, sizeof(UserTxBufferFS));
   /* USER CODE END 13 */
   return result;
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
+
+void USART3_IRQHandler(void)
+{
+  HAL_UART_IRQHandler(&UartHandle);
+
+  if (__HAL_UART_GET_IT_SOURCE(&UartHandle, UART_IT_IDLE) &&
+      __HAL_UART_GET_FLAG(&UartHandle, UART_FLAG_IDLE))
+  {
+    __HAL_UART_CLEAR_IDLEFLAG(&UartHandle);
+
+    uint16_t Len = UartHandle.RxXferSize - UartHandle.hdmarx->Instance->NDTR;
+    if (Len > 0)
+    {
+        HAL_UART_AbortReceive(&UartHandle);
+
+        CDC_Transmit_FS(UserTxBufferFS, Len);
+    }
+  }
+}
+
+/**
+  * @brief  Tx Transfer completed callback
+  * @param  huart: UART handle
+  * @retval None
+  */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  /* Initiate next USB packet transfer once UART completes transfer (transmitting data over Tx line) */
+  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+}
+
+/**
+  * @brief  ComPort_Config
+  *         Configure the COM Port with the parameters received from host.
+  * @param  None.
+  * @retval None.
+  * @note   When a configuration is not supported, a default value is used.
+  */
+static void ComPort_Config(void)
+{
+  if(HAL_UART_DeInit(&UartHandle) != HAL_OK)
+  {
+    /* Initialization Error */
+    Error_Handler();
+  }
+
+  /* set the Stop bit */
+  switch (LineCoding.format)
+  {
+  case 0:
+    UartHandle.Init.StopBits = UART_STOPBITS_1;
+    break;
+  case 2:
+    UartHandle.Init.StopBits = UART_STOPBITS_2;
+    break;
+  default :
+    UartHandle.Init.StopBits = UART_STOPBITS_1;
+    break;
+  }
+
+  /* set the parity bit*/
+  switch (LineCoding.paritytype)
+  {
+  case 0:
+    UartHandle.Init.Parity = UART_PARITY_NONE;
+    break;
+  case 1:
+    UartHandle.Init.Parity = UART_PARITY_ODD;
+    break;
+  case 2:
+    UartHandle.Init.Parity = UART_PARITY_EVEN;
+    break;
+  default :
+    UartHandle.Init.Parity = UART_PARITY_NONE;
+    break;
+  }
+
+  /*set the data type : only 8bits and 9bits is supported */
+  switch (LineCoding.datatype)
+  {
+  case 0x07:
+    /* With this configuration a parity (Even or Odd) must be set */
+    UartHandle.Init.WordLength = UART_WORDLENGTH_8B;
+    break;
+  case 0x08:
+    if(UartHandle.Init.Parity == UART_PARITY_NONE)
+    {
+      UartHandle.Init.WordLength = UART_WORDLENGTH_8B;
+    }
+    else
+    {
+      UartHandle.Init.WordLength = UART_WORDLENGTH_9B;
+    }
+
+    break;
+  default :
+    UartHandle.Init.WordLength = UART_WORDLENGTH_8B;
+    break;
+  }
+
+  UartHandle.Init.BaudRate   = LineCoding.bitrate;
+  if(HAL_UART_Init(&UartHandle) != HAL_OK)
+  {
+    /* Initialization Error */
+    Error_Handler();
+  }
+
+  /* Start reception */
+  HAL_UART_Receive_DMA(&UartHandle, UserTxBufferFS, sizeof(UserTxBufferFS));
+  __HAL_UART_ENABLE_IT(&UartHandle, UART_IT_IDLE);
+}
 
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

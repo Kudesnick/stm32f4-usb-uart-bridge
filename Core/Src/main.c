@@ -28,7 +28,8 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+#define USBD_P_PORT GPIOA
+#define USBD_P_PIN  GPIO_PIN_12
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -46,7 +47,7 @@ DMA_HandleTypeDef hdma_usart3_rx;
 DMA_HandleTypeDef hdma_usart3_tx;
 
 /* USER CODE BEGIN PV */
-bool pwr_key_must_push = false;
+volatile bool pwr_key_must_push = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,12 +56,27 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void _manual_push_disconnect(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void _manual_push_disconnect(void)
+{
+    __HAL_RCC_GPIOA_CLK_ENABLE();
 
+    GPIO_InitTypeDef GPIO_InitStruct;
+
+    GPIO_InitStruct.Pin = USBD_P_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(USBD_P_PORT, &GPIO_InitStruct);
+
+    HAL_GPIO_WritePin(USBD_P_PORT, USBD_P_PIN, GPIO_PIN_RESET);
+
+    HAL_Delay(10);
+}
 /* USER CODE END 0 */
 
 /**
@@ -86,7 +102,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  _manual_push_disconnect();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
